@@ -6,6 +6,7 @@ public struct Snapshot: Codable {
     public var clash="检测中"
     public var tun="检测中"
     public var netBird="未检测"
+    public var easyConnectRouteReady: Bool?
     public var easyConnect="检测中"
     public var vpn="检测中"
     public var dns="未测试"
@@ -73,7 +74,9 @@ public final class Coordinator {
             return s
         }
         let dir=URL(fileURLWithPath:settings.clashDirectory)
-        let process=NetworkProbe.easyConnectRunning();s.easyConnect=process ? "进程存在" : "未运行"
+        let process = settings.vpnBackend == .easyConnect && NetworkProbe.easyConnectRunning()
+        s.easyConnect = settings.vpnBackend == .netBird ? "未选用" : (process ? "进程存在" : "未运行")
+        s.netBird = settings.vpnBackend == .netBird ? "检测中" : "未选用"
         if NetworkProbe.proxyConflict() {s.warning="系统代理或 PAC 仍开启，可能与 TUN 冲突；请在 Clash 中检查。"}
         do {
             let api=try ClashAPI(directory:dir,client:settings.client,explicitSocket:explicitSocket)
@@ -103,8 +106,11 @@ public final class Coordinator {
                 return try inspectNetBird(plan, api: api, general: general, snapshot: s, diagnostics: diagnostics)
             }
             let route=try? NetworkProbe.route(settings.dns)
-            let ready=route?.isVPN(dns:settings.dns,clashDevice:device,easyConnectRunning:process)==true
-            s.vpn=ready ? "可用 · "+route!.interface : "不可用（进程存在不代表 VPN 已连接）"
+            let candidate = route?.isVPN(dns: settings.dns, clashDevice: device, easyConnectRunning: process) == true
+            let otherDevice = candidate && explicitSocket == nil ? NetBirdPlan.activeDevice() : nil
+            let ready = candidate && route?.interface != otherDevice
+            s.easyConnectRouteReady = ready
+            s.vpn=ready ? "可用 · "+route!.interface : "等待公司 DNS 专用路由"
             let source=settings.configURL
             let sourceBytes=try Data(contentsOf:source)
 
@@ -120,12 +126,12 @@ public final class Coordinator {
                     } catch {lastDNS="公司 DNS 或目标路由检查失败；未回退公共 DNS"}
                 } else {lastDNS="VPN 未就绪，使用原有解析"}
             }
-            if !ready {lastDNS="VPN 未就绪，使用原有解析"}
+            if !ready {lastDNS="VPN 未就绪，使用原有解析"; lastProbe = .distantPast; lastHosts = []; s.hosts = []}
             s.dns=lastDNS
             if enabled {
                 if !on || !ready || (general["mode"] as? String != "rule") {
                     _ = try Recovery.restore(root:root,force:true,explicitSocket:explicitSocket)
-                    fingerprint="";s.mode = !on ? "等待 Clash TUN" : !ready ? "等待 VPN · 公司内网暂不可用" : "等待 Clash 规则模式"
+                    fingerprint="";s.mode = !on ? "等待 Clash TUN" : !ready ? (process ? "等待 EasyConnect 登录或建立路由" : "等待打开 EasyConnect") : "等待 Clash 规则模式"
                 } else if let route, var session=lease {
                     let cidrs=try NetworkProbe.vpnCIDRs(interface:route.interface)
                     guard !cidrs.isEmpty else {throw AppFailure("VPN 没有可用的目标网段")}

@@ -125,8 +125,8 @@ public struct NetBirdPlan {
         let minutes=Int(now.timeIntervalSince(latest)/60)
         return (minutes==0 ? "刚才" : "约"+String(minutes)+"分钟前")+"有资源无可用路由节点"
     }
-    public static func discover(domains:[String]) -> (String,NetBirdPlan?) {
-        guard let cli=NetBirdConnection.executable else {return ("未安装 CLI",nil)}
+    private static func connectedTunnel() -> (String, (cli: String, status: [String:Any], ip: String, device: String)?) {
+        guard let cli=NetBirdConnection.executable else {return ("未安装 CLI", nil)}
         guard let raw=try? Command.run(cli,["status","--json"],timeout:4),raw.code==0,
               let j=(try? JSONSerialization.jsonObject(with:Data(raw.out.utf8))) as? [String:Any] else {return ("状态不可读",nil)}
         let managed=(j["management"] as? [String:Any])?["connected"] as? Bool==true
@@ -142,6 +142,15 @@ public struct NetBirdPlan {
             if getnameinfo(addr,socklen_t(addr.pointee.sa_len),&buf,socklen_t(buf.count),nil,0,NI_NUMERICHOST)==0,String(cString:buf)==ip {device=String(cString:p.pointee.ifa_name);break}
         }
         guard let device,device.range(of:"^utun[0-9]+$",options:.regularExpression) != nil else {return ("已连接 · 隧道接口未就绪",nil)}
+        return ("已连接", (cli, j, ip, device))
+    }
+
+    static func activeDevice() -> String? { connectedTunnel().1?.device }
+
+    public static func discover(domains:[String]) -> (String,NetBirdPlan?) {
+        let (statusText, tunnel) = connectedTunnel()
+        guard let (cli, j, ip, device) = tunnel else { return (statusText, nil) }
+        let managed = (j["management"] as? [String:Any])?["connected"] as? Bool == true
         let resources=try? Command.run(cli,["networks","list"],timeout:4)
         let resolvers=try? Command.run("/usr/sbin/scutil",["--dns"],timeout:3)
         var checked=[String:Bool]()

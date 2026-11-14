@@ -27,7 +27,7 @@
 2. 在源码目录执行 `./scripts/build-app.sh`，生成 `dist/EasyClash.app`。构建产物仅临时签名（ad-hoc），没有 Developer ID 签名或公证。
 3. 把应用放到固定位置，例如 `/Applications`，首次启动进入“设置”。
 4. 选择 VPN 并填写公司域名。NetBird 自动发现专用 DNS，只处理已分配且有 macOS 专用解析器的资源；仅有通配符资源时须填写具体探测主机。EasyConnect 需填写公司 DNS IPv4。所有网络字段默认为空，没有预置公司信息。
-5. 选择客户端，保持该客户端 TUN 开启、规则模式，建议系统代理/PAC 关闭。NetBird 直接从 EasyClash 菜单连接；EasyConnect 先在其客户端登录，再开启协同。
+5. 选择客户端，保持该客户端 TUN 开启、规则模式，建议系统代理/PAC 关闭。NetBird 直接从 EasyClash 菜单连接；EasyConnect 选择“打开 EasyConnect 并开启协同”，在客户端完成登录，等待公司 DNS 路由通过验证。
 
 示例仅用于说明：域名 `corp.example.com`、DNS `192.0.2.53`、探测主机 `portal.corp.example.com`。这些是保留示例地址，不能用于实际连接。探测主机须属于配置的域名范围，解析出的 IPv4 地址须经 VPN 路由；留空时使用排序后的首个公司域名。
 

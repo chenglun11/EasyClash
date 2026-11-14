@@ -28,6 +28,10 @@ final class CoreTests {
 
     func testVPNRouteRejectsClashDefaultAndProcessOnly() {
         let good=RouteInfo.parse("destination: 192.0.2.53\ngateway: 192.0.2.1\ninterface: utun4\n")
+        expectFalse(good.isVPN(dns:"192.0.2.53",clashDevice:"utun1024",easyConnectRunning:true,netBirdDevice:"utun4"))
+        expectTrue(good.isVPN(dns:"192.0.2.53",clashDevice:"utun1024",easyConnectRunning:true,netBirdDevice:"utun9"))
+        expectFalse(NetworkProbe.hasEasyConnectProcess("/Applications/EasyConnect.app/Contents/Resources/bin/ECAgent\n/tmp/svpnservice"))
+        expectTrue(NetworkProbe.hasEasyConnectProcess("/Applications/EasyConnect.app/Contents/Resources/bin/svpnservice"))
         expectTrue(good.isVPN(dns:"192.0.2.53",clashDevice:"utun1024",easyConnectRunning:true))
         expectFalse(good.isVPN(dns:"192.0.2.53",clashDevice:"utun4",easyConnectRunning:true))
         expectFalse(good.isVPN(dns:"192.0.2.53",clashDevice:"utun1024",easyConnectRunning:false))

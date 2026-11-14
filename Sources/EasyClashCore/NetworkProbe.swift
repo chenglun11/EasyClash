@@ -12,8 +12,8 @@ public struct RouteInfo: Equatable, Codable {
         }
         return RouteInfo(destination:fields["destination"] ?? "",gateway:fields["gateway"] ?? "",interface:fields["interface"] ?? "")
     }
-    public func isVPN(dns:String,clashDevice:String,easyConnectRunning:Bool) -> Bool {
-        easyConnectRunning && destination==dns && interface.range(of:"^utun[0-9]+$",options:.regularExpression) != nil && interface != clashDevice && !gateway.hasPrefix("198.18.") && !gateway.hasPrefix("198.19.") && gateway != "" && gateway != "default"
+    public func isVPN(dns:String,clashDevice:String,easyConnectRunning:Bool, netBirdDevice:String? = nil) -> Bool {
+        easyConnectRunning && interface != netBirdDevice && destination==dns && interface.range(of:"^utun[0-9]+$",options:.regularExpression) != nil && interface != clashDevice && !gateway.hasPrefix("198.18.") && !gateway.hasPrefix("198.19.") && gateway != "" && gateway != "default"
     }
 }
 public struct HostDiagnostic: Codable {
@@ -51,8 +51,16 @@ public enum NetworkProbe {
         return result.sorted()
     }
     public static func easyConnectRunning() -> Bool {
-        let r=try? Command.run("/bin/ps",["-axo","comm="],timeout:3)
-        return r?.out.split(separator:"\n").contains { $0.contains("/EasyConnect.app/Contents/MacOS/EasyConnect") || $0.hasSuffix("/svpnservice") } ?? false
+        guard let result = try? Command.run("/bin/ps", ["-axo", "comm="], timeout: 3), result.code == 0 else { return false }
+        return hasEasyConnectProcess(result.out)
+    }
+
+    package static func hasEasyConnectProcess(_ listing: String) -> Bool {
+        listing.split(separator: "\n").contains { line in
+            let path = line.trimmingCharacters(in: .whitespaces)
+            return path.hasSuffix("/EasyConnect.app/Contents/MacOS/EasyConnect") ||
+                   path.hasSuffix("/EasyConnect.app/Contents/Resources/bin/svpnservice")
+        }
     }
     public static func proxyConflict() -> Bool {
         let r=try? Command.run("/usr/sbin/scutil",["--proxy"],timeout:3)
