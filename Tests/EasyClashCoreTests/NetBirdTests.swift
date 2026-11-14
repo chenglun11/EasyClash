@@ -1,6 +1,20 @@
 import Foundation
 import EasyClashCore
 func netBirdTests() throws {
+    let online = #"{"daemonStatus":"Connected","netbirdIp":"100.64.0.7/16","management":{"url":"https://vpn.example"}}"#
+    var calls: [[String]] = []
+    try NetBirdConnection.connect(managementURL:"https://vpn.example") { args, _ in calls.append(args); return (0,online) }
+    expectEqual(calls, [["status", "--json"]])
+    calls = []
+    try NetBirdConnection.connect(managementURL:"https://vpn.example") { args, _ in
+        calls.append(args)
+        if calls.count == 1 { return (0, #"{"daemonStatus":"NeedsLogin"}"#) }
+        return (0, args.first == "up" ? "" : online)
+    }
+    expectEqual(calls, [["status","--json"],["up","--management-url","https://vpn.example"],["status","--json"]])
+    expectThrows(try NetBirdConnection.connect(managementURL:"https://other.example") { _,_ in (0, online) })
+    expectThrows(try NetBirdConnection.connect(managementURL:"") { _,_ in (1, "error") })
+    expectThrows(try NetBirdConnection.validateManagementURL("https://user:password@vpn.example"))
     var grace=NetBirdProbeGrace()
     expectTrue(grace.retain(fingerprint:"plan",installed:"plan",markerPresent:true,now:10))
     expectTrue(grace.retain(fingerprint:"plan",installed:"plan",markerPresent:true,now:39))

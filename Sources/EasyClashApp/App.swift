@@ -6,6 +6,7 @@ import EasyClashCore
 
 final class Model: ObservableObject {
     @Published var state=Snapshot()
+    @Published var connectingNetBird = false
     @Published var busy=false
     @Published var checking=false
     @Published var error=""
@@ -50,19 +51,41 @@ final class Model: ObservableObject {
             DispatchQueue.main.async {self.error=failure;self.state=s;self.busy=false;if failure.isEmpty {completion?()};self.runPendingDiagnostics()}
         }
     }
+    func connectNetBird() {
+        guard !busy && !connectingNetBird else { return }
+        do { _ = try settings.validated() } catch {
+            self.error = (error as? AppFailure)?.message ?? "请先完成设置"
+            return
+        }
+        connectingNetBird = true
+        error = ""
+        let address = settings.managementURL
+        // Browser authentication can take a while. Keep periodic route checks and lease renewal running.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let failure: String?
+            do { try NetBirdConnection.connect(managementURL: address); failure = nil }
+            catch { failure = (error as? AppFailure)?.message ?? "连接 NetBird 失败" }
+            DispatchQueue.main.async {
+                self.connectingNetBird = false
+                if let failure { self.error = failure; self.refresh(); return }
+                if self.state.enabled { self.refresh(diagnostics: true) }
+                else { self.toggle() }
+            }
+        }
+    }
     func toggle() {
         let off=state.enabled
         let helper=Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/EasyClashRecovery")
         let app=Bundle.main.bundleURL.path
         operation {if off {try self.engine.disable()} else {try self.engine.enable(helper:helper,appPath:app)}}
     }
-    func save(_ s:EasyClashCore.Settings) {operation({try self.engine.save(s)},completion:{self.settings=s;self.windows["设置"]?.close()})}
+    func save(_ s:EasyClashCore.Settings) {guard !connectingNetBird else { return };operation({try self.engine.save(s)},completion:{self.settings=s;self.windows["设置"]?.close()})}
     func setLogin(_ value:Bool) {
         do {if value {try SMAppService.mainApp.register()} else {try SMAppService.mainApp.unregister()};login=SMAppService.mainApp.status == .enabled}
         catch {self.error="登录启动设置失败，请在系统设置 → 通用 → 登录项中检查"}
     }
     func openVPN() {
-        let name = settings.vpnBackend.rawValue
+        let name = "EasyConnect"
         let url=URL(fileURLWithPath:"/Applications/"+name+".app")
         NSWorkspace.shared.openApplication(at:url,configuration:NSWorkspace.OpenConfiguration()) { _,error in if error != nil {Task { @MainActor in self.error="无法打开 "+name }} }
     }
@@ -73,7 +96,7 @@ final class Model: ObservableObject {
         w.title="EasyClash · "+name;w.contentView=NSHostingView(rootView:content);w.isReleasedWhenClosed=false;w.center();windows[name]=w;w.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
         if name=="诊断" {refresh(diagnostics:true)}
     }
-    func quit() {operation({try self.engine.disable()},completion:{NSApp.terminate(nil)})}
+    func quit() { guard !busy && !connectingNetBird else { return }; operation({try self.engine.disable()},completion:{NSApp.terminate(nil)})}
 }
 
 struct StateRow:View {
@@ -88,11 +111,18 @@ struct MenuView:View {
             Divider()
             VStack(spacing:8) {StateRow(title:model.state.client=="FlClash" ? "FlClash":"Clash",value:model.state.clash);StateRow(title:"TUN",value:model.state.tun);StateRow(title:model.settings.vpnBackend.rawValue,value:model.settings.vpnBackend == .netBird ? model.state.netBird : model.state.easyConnect);StateRow(title:"VPN 路由",value:model.state.vpn);StateRow(title:"公司 DNS",value:model.state.dns)}
             if !model.state.warning.isEmpty {Label(model.state.warning,systemImage:"exclamationmark.triangle").font(.caption).foregroundStyle(.orange).fixedSize(horizontal:false,vertical:true)}
+            if model.connectingNetBird { Text("正在连接 NetBird，如浏览器打开请完成登录…").font(.caption) }
             if !model.error.isEmpty {Text(model.error).font(.caption).foregroundStyle(.red)}
-            Button(action:model.toggle) {Text(model.state.enabled ? "关闭协同模式":"开启协同模式").frame(maxWidth:.infinity)}.buttonStyle(.borderedProminent).disabled(model.busy)
-            HStack {Button("打开 "+model.settings.vpnBackend.rawValue,action:model.openVPN);Spacer();Button("重新检测") {model.refresh(diagnostics:true)}.disabled(model.busy)}
+            Button(action: {
+                if !model.state.enabled && model.settings.vpnBackend == .netBird { model.connectNetBird() }
+                else { model.toggle() }
+            }) {Text(model.state.enabled ? "关闭协同模式" : (model.settings.vpnBackend == .netBird ? "连接 NetBird 并开启协同" : "开启协同模式")).frame(maxWidth:.infinity)}.buttonStyle(.borderedProminent).disabled(model.busy || model.connectingNetBird)
+            HStack {
+                if model.settings.vpnBackend == .easyConnect { Button("打开 EasyConnect",action:model.openVPN) }
+                else if model.state.enabled { Button("连接 NetBird", action:model.connectNetBird).disabled(model.connectingNetBird || model.busy) }
+                Spacer();Button("重新检测") {model.refresh(diagnostics:true)}.disabled(model.busy)}
             Divider()
-            HStack {Button("设置…") {model.show("设置")};Button("诊断…") {model.show("诊断")};Spacer();Button("退出",action:model.quit).disabled(model.busy)}.buttonStyle(.plain)
+            HStack {Button("设置…") {model.show("设置")};Button("诊断…") {model.show("诊断")};Spacer();Button("退出",action:model.quit).disabled(model.busy || model.connectingNetBird)}.buttonStyle(.plain)
         }.padding(18).frame(width:370)
 
     }
@@ -102,6 +132,7 @@ struct SettingsView:View {
     @State private var domains=""
     @State private var dns=""
     @State private var vpnBackend: VPNBackend = .easyConnect
+    @State private var managementURL = ""
     @State private var probeHost=""
     @State private var directory=""
     @State private var client:ProxyClient = .verge
@@ -112,6 +143,7 @@ struct SettingsView:View {
                 TextEditor(text:$domains).font(.system(.body,design:.monospaced)).frame(height:95).border(.quaternary)
                 Picker("VPN",selection:$vpnBackend) { ForEach(VPNBackend.allCases,id:\.self) { Text($0.rawValue).tag($0) } }
                 if vpnBackend == .easyConnect { TextField("公司 DNS（IPv4）",text:$dns) }
+                else { TextField("自托管管理服务（可选，HTTPS）",text:$managementURL) }
                 TextField("探测主机（可选，必须能经 VPN 访问）",text:$probeHost)
                 Text(vpnBackend == .netBird ? "使用 NetBird 分配的资源和 DNS。只有通配符资源时，请填写具体探测主机。" : "留空则检查首个公司域名；探测主机必须属于上面的域名范围。").font(.caption).foregroundStyle(.secondary)
                 Text("仅在 VPN 路由就绪时生效；VPN 断开后恢复 Clash 原有解析。内网 DNS 查询失败不会转发到公共 DNS。").font(.caption).foregroundStyle(.secondary)
@@ -128,8 +160,8 @@ struct SettingsView:View {
             }
             if model.state.enabled {Text("修改设置前，请先关闭协同模式。").foregroundStyle(.orange)}
             if !model.error.isEmpty {Text(model.error).foregroundStyle(.red)}
-            HStack {Spacer();Button("保存") {var s=EasyClashCore.Settings();s.domains=domains.components(separatedBy:.newlines);s.dns=dns.trimmingCharacters(in:.whitespaces);s.clashDirectory=directory;s.client=client;s.vpnBackend=vpnBackend;s.probeHost=probeHost;model.save(s)}.buttonStyle(.borderedProminent).disabled(model.busy || model.state.enabled)}
-        }.formStyle(.grouped).padding().onAppear {vpnBackend=model.settings.vpnBackend;client=model.settings.client;domains=model.settings.domains.joined(separator:"\n");dns=model.settings.dns;probeHost=model.settings.probeHost;directory=model.settings.clashDirectory}
+            HStack {Spacer();Button("保存") {var s=EasyClashCore.Settings();s.domains=domains.components(separatedBy:.newlines);s.dns=dns.trimmingCharacters(in:.whitespaces);s.clashDirectory=directory;s.client=client;s.vpnBackend=vpnBackend;s.managementURL=managementURL;s.probeHost=probeHost;model.save(s)}.buttonStyle(.borderedProminent).disabled(model.busy || model.state.enabled || model.connectingNetBird)}
+        }.formStyle(.grouped).padding().onAppear {managementURL=model.settings.managementURL;vpnBackend=model.settings.vpnBackend;client=model.settings.client;domains=model.settings.domains.joined(separator:"\n");dns=model.settings.dns;probeHost=model.settings.probeHost;directory=model.settings.clashDirectory}
     }
 }
 struct DiagnosticsView:View {

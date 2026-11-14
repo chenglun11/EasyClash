@@ -41,12 +41,12 @@ with tempfile.TemporaryDirectory() as tmp:
     (stage / "安装说明.txt").write_text(
         "适用于 Apple Silicon，macOS 13 或更新版本。\n"
         "1. 将 EasyClash.app 拖到 Applications。EasyClash 使用临时签名，未经公证。\n"
-        "2. 已经使用 NetBird 的设备可以跳过安装。首次安装请运行同一镜像内的官方 NetBird pkg，再登录自己的网络。\n"
-        "3. 打开 EasyClash 设置，选择 NetBird 和代理客户端，填写公司域名后开启协同。\n"
+        "2. 已经使用 NetBird 的设备可以跳过安装。首次安装请运行同一镜像内的官方 NetBird pkg。\n"
+        "3. 打开 EasyClash 设置，选择 NetBird 和代理客户端，填写公司域名后点“连接 NetBird 并开启协同”。首次登录按浏览器提示授权。\n"
         "4. 如需卸载：先关闭协同，然后按项目的 docs/OPERATIONS.md 清理恢复守护。NetBird 使用其独立卸载流程。\n",
         encoding="utf-8",
     )
-    out = dist / "EasyClash-0.4.0-NetBird-macOS-arm64.dmg"
+    out = dist / "EasyClash-0.4.1-NetBird-macOS-arm64.dmg"
     subprocess.run(["hdiutil", "create", "-ov", "-format", "UDZO", "-volname", "EasyClash", "-srcfolder", str(stage), str(out)], check=True)
     subprocess.run(["hdiutil", "verify", str(out)], check=True)
     print(out)

@@ -15,7 +15,69 @@ public struct NetBirdProbeGrace {
     }
 }
 
-/// Only domains explicitly selected by NetBird and backed by its macOS resolver are eligible.
+public enum NetBirdConnection {
+    static var executable: String? {
+        ["/Applications/NetBird.app/Contents/MacOS/netbird", "/opt/homebrew/bin/netbird", "/usr/local/bin/netbird"]
+            .first(where: FileManager.default.isExecutableFile(atPath:))
+    }
+
+    // The CLI talks to the installed system service. Its normal SSO flow opens the browser.
+    public static func connect(managementURL: String = "") throws {
+        guard let executable else { throw AppFailure("请先安装镜像里的官方 NetBird 安装包") }
+        try connect(managementURL: managementURL) { arguments, seconds in
+            let result = try Command.run(executable, arguments, timeout: seconds)
+            return (result.code, result.out)
+        }
+    }
+
+    public static func validateManagementURL(_ value: String) throws {
+        guard !value.isEmpty else { return }
+        guard let url = URLComponents(string: value), url.scheme?.lowercased() == "https",
+              let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/"
+        else { throw AppFailure("管理服务地址应为 HTTPS 站点，可含端口") }
+    }
+
+    package static func connect(managementURL: String, run: ([String], Double) throws -> (Int32, String)) throws {
+        try validateManagementURL(managementURL)
+        func status() throws -> [String: Any] {
+            let (code, output) = try run(["status", "--json"], 5)
+            guard code == 0, let value = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any],
+                  value["daemonStatus"] is String else {
+                throw AppFailure("无法读取 NetBird 后台服务，请检查官方安装包是否已安装")
+            }
+            return value
+        }
+        func connected(_ value: [String: Any]) -> Bool {
+            value["daemonStatus"] as? String == "Connected" && !(value["netbirdIp"] as? String ?? "").isEmpty
+        }
+        let current = try status()
+        if connected(current) {
+            if !managementURL.isEmpty {
+                let currentURL = (current["management"] as? [String: Any])?["url"] as? String
+                guard let active = currentURL.flatMap(URLComponents.init(string:)),
+                      let desired = URLComponents(string: managementURL),
+                      active.host?.lowercased() == desired.host?.lowercased(),
+                      (active.port ?? 443) == (desired.port ?? 443) else {
+                    throw AppFailure("当前会话连接的是其他管理服务。请先确认所选 NetBird 配置")
+                }
+            }
+            return
+        }
+        var args = ["up"]
+        if !managementURL.isEmpty { args += ["--management-url", managementURL] }
+        guard try run(args, 120).0 == 0 else {
+            throw AppFailure("NetBird 连接未完成。请核对管理服务地址并完成浏览器授权，然后重试")
+        }
+        for attempt in 0..<5 {
+            if connected(try status()) { return }
+            if attempt < 4 { Thread.sleep(forTimeInterval: 0.4) }
+        }
+        throw AppFailure("NetBird 尚未建立隧道，请查看诊断或再次连接")
+    }
+}
+
+/// Match network resources to the resolver owned by the live VPN interface.
 public struct NetBirdPlan {
     public var device: String
     public var localIP: String
@@ -60,7 +122,7 @@ public struct NetBirdPlan {
         return (minutes==0 ? "刚才" : "约"+String(minutes)+"分钟前")+"有资源无可用路由节点"
     }
     public static func discover(domains:[String]) -> (String,NetBirdPlan?) {
-        guard let cli=["/usr/local/bin/netbird","/opt/homebrew/bin/netbird","/Applications/NetBird.app/Contents/MacOS/netbird"].first(where:{FileManager.default.isExecutableFile(atPath:$0)}) else {return ("未安装 CLI",nil)}
+        guard let cli=NetBirdConnection.executable else {return ("未安装 CLI",nil)}
         guard let raw=try? Command.run(cli,["status","--json"],timeout:4),raw.code==0,
               let j=(try? JSONSerialization.jsonObject(with:Data(raw.out.utf8))) as? [String:Any] else {return ("状态不可读",nil)}
         let managed=(j["management"] as? [String:Any])?["connected"] as? Bool==true

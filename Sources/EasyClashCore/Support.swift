@@ -126,6 +126,7 @@ public enum VPNBackend: String, Codable, CaseIterable {
 public struct Settings: Codable, Equatable {
     public var domains: [String] = []
     public var dns: String = ""
+    public var managementURL: String = ""
     public var vpnBackend: VPNBackend = .easyConnect
     public var probeHost: String = ""
     public var effectiveProbeHost: String {probeHost.isEmpty ? (domains.first ?? "") : probeHost}
@@ -133,9 +134,10 @@ public struct Settings: Codable, Equatable {
     public var clashDirectory: String = Files.clash.path
     public var configURL:URL {URL(fileURLWithPath:clashDirectory).appendingPathComponent(client.configName)}
     public init() {}
-    enum CodingKeys:String,CodingKey {case domains,dns,clashDirectory,client,probeHost,vpnBackend}
+    enum CodingKeys:String,CodingKey {case domains,dns,clashDirectory,client,probeHost,vpnBackend,managementURL}
     public init(from decoder:Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
+        managementURL = try c.decodeIfPresent(String.self, forKey: .managementURL) ?? ""
         vpnBackend = try c.decodeIfPresent(VPNBackend.self, forKey: .vpnBackend) ?? .easyConnect
         client=try c.decodeIfPresent(ProxyClient.self,forKey:.client) ?? .verge
         domains=try c.decodeIfPresent([String].self,forKey:.domains) ?? []
@@ -156,6 +158,8 @@ public struct Settings: Codable, Equatable {
             let labels=s.probeHost.split(separator:".",omittingEmptySubsequences:false)
             guard s.probeHost.count<=253,labels.allSatisfy({!$0.isEmpty && $0.count<=63 && $0.range(of:"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",options:.regularExpression) != nil}),s.domains.contains(where:{s.probeHost == $0 || s.probeHost.hasSuffix("."+$0)}) else {throw AppFailure("探测主机必须属于已配置的公司域名，且不含协议或路径")}
         }
+        s.managementURL = managementURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if vpnBackend == .netBird { try NetBirdConnection.validateManagementURL(s.managementURL) }
         if vpnBackend == .easyConnect {
             var ip=in_addr()
             guard inet_pton(AF_INET,s.dns,&ip)==1, !s.dns.hasPrefix("127."), s.dns != "0.0.0.0", !s.dns.hasPrefix("198.18."), !s.dns.hasPrefix("198.19.") else { throw AppFailure("公司 DNS 必须是有效的非回环 IPv4 地址") }
