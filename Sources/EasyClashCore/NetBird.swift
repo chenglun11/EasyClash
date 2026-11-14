@@ -21,6 +21,10 @@ public enum NetBirdConnection {
             .first(where: FileManager.default.isExecutableFile(atPath:))
     }
 
+    public static var installationPath: String? {
+        executable.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+    }
+
     // The CLI talks to the installed system service. Its normal SSO flow opens the browser.
     public static func connect(managementURL: String = "") throws {
         guard let executable else { throw AppFailure("请先安装镜像里的官方 NetBird 安装包") }

@@ -71,3 +71,29 @@ func netBirdTests() throws {
     let legacy = try JSONDecoder().decode(Settings.self, from: Data("{}".utf8))
     expectEqual(legacy.vpnBackend, .easyConnect)
 }
+
+func softwareUpdateTests() throws {
+    let tag = "0.10.0"
+    let file = "EasyClash-\(tag)-NetBird-macOS-arm64.dmg"
+    let url = "https://github.com/chenglun11/EasyClash/releases/download/v\(tag)/\(file)"
+    let payload = Data("update fixture".utf8)
+    func release(_ path: String? = nil, prerelease: Bool = false) throws -> ReleaseUpdate {
+        let asset: [String: Any] = ["name": file, "browser_download_url": path ?? url,
+                                   "size": payload.count, "digest": "sha256:" + Files.hash(payload)]
+        let json: [String: Any] = ["tag_name": "v" + tag, "prerelease": prerelease, "draft": false, "assets": [asset]]
+        return try ReleaseUpdate.parse(JSONSerialization.data(withJSONObject: json), product: .easyClash, arm: true)
+    }
+    let update = try release()
+    expectTrue(try update.isNewer(than: "0.9.99"))
+    expectFalse(try update.isNewer(than: "0.10.0"))
+    expectFalse(try update.isNewer(than: "1.0.0"))
+    expectThrows(try update.isNewer(than: "0.9.0-rc1"))
+    expectThrows(try release("https://example.org/" + file))
+    expectThrows(try release(prerelease: true))
+    let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    try payload.write(to: tmp)
+    expectNoThrow(try update.verify(tmp))
+    try Data(repeating: 65, count: payload.count).write(to: tmp)
+    expectThrows(try update.verify(tmp))
+}

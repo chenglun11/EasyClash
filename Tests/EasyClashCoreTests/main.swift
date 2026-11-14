@@ -21,6 +21,7 @@ do {
     tests.testRouteTableScopeAndInterfaceChanges()
     try tests.testBackgroundCommandsExitAndTimeout()
     try netBirdTests()
+    try softwareUpdateTests()
     try clientTests()
     try integrationTests()
     try flClashIntegrationTests()

@@ -91,9 +91,14 @@ final class Model: ObservableObject {
     }
     func show(_ name:String) {
         if let w=windows[name] {w.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true);return}
-        let content:AnyView = name=="设置" ? AnyView(SettingsView(model:self)) : AnyView(DiagnosticsView(model:self))
+        let content:AnyView
+        switch name {
+        case "更新": content=AnyView(UpdateView())
+        case "设置": content=AnyView(SettingsView(model:self))
+        default: content=AnyView(DiagnosticsView(model:self))
+        }
         let w=NSWindow(contentRect:NSRect(x:0,y:0,width:name=="设置" ? 510:660,height:name=="设置" ? 660:540),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
-        w.title="EasyClash · "+name;w.contentView=NSHostingView(rootView:content);w.isReleasedWhenClosed=false;w.center();windows[name]=w;w.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
+        if name=="更新" {w.setContentSize(NSSize(width:510,height:280))};w.title="EasyClash · "+name;w.contentView=NSHostingView(rootView:content);w.isReleasedWhenClosed=false;w.center();windows[name]=w;w.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
         if name=="诊断" {refresh(diagnostics:true)}
     }
     func quit() { guard !busy && !connectingNetBird else { return }; operation({try self.engine.disable()},completion:{NSApp.terminate(nil)})}
@@ -122,7 +127,7 @@ struct MenuView:View {
                 else if model.state.enabled { Button("连接 NetBird", action:model.connectNetBird).disabled(model.connectingNetBird || model.busy) }
                 Spacer();Button("重新检测") {model.refresh(diagnostics:true)}.disabled(model.busy)}
             Divider()
-            HStack {Button("设置…") {model.show("设置")};Button("诊断…") {model.show("诊断")};Spacer();Button("退出",action:model.quit).disabled(model.busy || model.connectingNetBird)}.buttonStyle(.plain)
+            HStack {Button("设置…") {model.show("设置")};Button("诊断…") {model.show("诊断")};Button("检查更新…") {model.show("更新")};Spacer();Button("退出",action:model.quit).disabled(model.busy || model.connectingNetBird)}.buttonStyle(.plain)
         }.padding(18).frame(width:370)
 
     }
