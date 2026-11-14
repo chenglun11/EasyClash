@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "4. 如需卸载：先关闭协同，然后按项目的 docs/OPERATIONS.md 清理恢复守护。NetBird 使用其独立卸载流程。\n",
         encoding="utf-8",
     )
-    out = dist / "EasyClash-0.4.3-NetBird-macOS-arm64.dmg"
+    out = dist / "EasyClash-0.4.4-NetBird-macOS-arm64.dmg"
     subprocess.run(["hdiutil", "create", "-ov", "-format", "UDZO", "-volname", "EasyClash", "-srcfolder", str(stage), str(out)], check=True)
     subprocess.run(["hdiutil", "verify", str(out)], check=True)
     print(out)

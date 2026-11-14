@@ -23,6 +23,7 @@ do {
     try netBirdTests()
     try softwareUpdateTests()
     try clientTests()
+    try observationTests()
     try integrationTests()
     try flClashIntegrationTests()
     print("PASS: public source tests, \(assertions) assertions")

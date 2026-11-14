@@ -17,6 +17,10 @@
 
 不会自动处理 VPN 凭据、断开 VPN、开关 TUN 或重启代理客户端。协同配置不写入订阅、Merge 或扩展脚本。
 
+## 连接日志与 Clash 配置
+
+在菜单栏打开“连接日志”，访问目标服务后选中连接，可查看命中规则及 VPN 出口依据。仅在窗口可见时采样，最近 500 条保存在内存中。“Clash 配置”可查看磁盘配置、协同计划、内核实际规则和修改记录。两个页面默认隐藏域名、IP 和 DNS，勾选“显示本机明细”可在本机排查。分享时使用“复制脱敏摘要”。
+
 ## 下载
 
 在 [GitHub Releases](https://github.com/chenglun11/EasyClash/releases) 下载 Apple Silicon 安装镜像。将 EasyClash 拖入 Applications。已有 NetBird 客户端可直接使用；首次安装请运行镜像内的官方 NetBird 安装包。之后只打开 EasyClash，点击“连接 NetBird 并开启协同”。登录过的设备复用当前配置，首次授权在浏览器完成。自托管网络可在设置填写管理服务的 HTTPS 地址。EasyClash 使用临时签名，未公证。

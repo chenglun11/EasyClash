@@ -232,6 +232,7 @@ public final class Coordinator {
                         else { throw AppFailure("NetBird 分流规则验证失败") }
                     }
                     guard Set(try api.dns(host)) == Set(upstream) else { throw AppFailure("Clash DNS 与 VPN DNS 不一致") }
+                    if needsApply { Audit(root:root).event("netbird_overlay_verified") }
                     fingerprint = signature
                     let (code, ok) = (try? NetworkProbe.proxyHTTPS(host: host, port: general["mixed-port"] as? Int ?? 0)) ?? (0, false)
                     lastHosts = [HostDiagnostic(host: host, dns: "专用 DNS 已验证", route: "NetBird · " + plan.device,

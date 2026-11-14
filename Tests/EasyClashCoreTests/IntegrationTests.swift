@@ -72,6 +72,12 @@ func integrationTests() throws {
     let routed=try Configuration.overlay(routeFixture,settings:settings,interface:"utun42",vpnCIDRs:["10.0.0.0/8","192.0.2.80/32"])
     try api.reload(routed,requireTun:false)
     expectTrue(try api.hasRules(settings.domains))
+    let reader = try ObservationReader(settings:settings, root:root, explicitSocket:socket)
+    let beforeRead = try Data(contentsOf:source)
+    expectFalse(reader.configuration().rules.isEmpty)
+    expectNoThrow(try reader.traffic())
+    expectEqual(try Data(contentsOf:source), beforeRead)
+    expectTrue(try api.hasRules(settings.domains))
     let proxies=try api.request("/proxies")["proxies"] as? [String:Any] ?? [:]
     expectNotNil(proxies[Configuration.vpnProxy])
     // Run the actual standalone guardian against ONLY the isolated socket.

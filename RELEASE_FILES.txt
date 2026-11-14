@@ -7,6 +7,7 @@ README.md
 RELEASE_FILES.txt
 SECURITY.md
 Sources/EasyClashApp/App.swift
+Sources/EasyClashApp/ObservationViews.swift
 Sources/EasyClashApp/UpdateView.swift
 Sources/EasyClashCore/ClashAPI.swift
 Sources/EasyClashCore/Clients.swift
@@ -15,9 +16,10 @@ Sources/EasyClashCore/Coordinator.swift
 Sources/EasyClashCore/FlClashSetup.swift
 Sources/EasyClashCore/NetBird.swift
 Sources/EasyClashCore/NetworkProbe.swift
+Sources/EasyClashCore/Observability.swift
 Sources/EasyClashCore/Recovery.swift
-Sources/EasyClashCore/Support.swift
 Sources/EasyClashCore/SoftwareUpdate.swift
+Sources/EasyClashCore/Support.swift
 Sources/EasyClashRecovery/main.swift
 THIRD_PARTY/NetBird-LICENSE.txt
 THIRD_PARTY/Yams-LICENSE.txt
@@ -26,6 +28,7 @@ Tests/EasyClashCoreTests/CoreTests.swift
 Tests/EasyClashCoreTests/FlClashTests.swift
 Tests/EasyClashCoreTests/IntegrationTests.swift
 Tests/EasyClashCoreTests/NetBirdTests.swift
+Tests/EasyClashCoreTests/ObservationTests.swift
 Tests/EasyClashCoreTests/main.swift
 docs/ARCHITECTURE.md
 docs/OPERATIONS.md

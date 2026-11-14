@@ -4,7 +4,7 @@ import Network
 import ServiceManagement
 import EasyClashCore
 
-final class Model: ObservableObject {
+final class Model: NSObject, ObservableObject {
     @Published var state=Snapshot()
     @Published var connectingNetBird = false
     @Published var busy=false
@@ -12,6 +12,7 @@ final class Model: ObservableObject {
     @Published var error=""
     @Published var settings=EasyClashCore.Settings()
     @Published var login=false
+    let observation = ObservationModel()
     private let engine=Coordinator()
     private var pendingDiagnostics=false
     private var appLock:FileLock?
@@ -20,7 +21,8 @@ final class Model: ObservableObject {
     private let monitor=NWPathMonitor()
     private var observers:[NSObjectProtocol]=[]
     private var windows:[String:NSWindow]=[:]
-    init() {
+    override init() {
+        super.init()
         do {appLock=try FileLock(Files.state.appendingPathComponent("app.lock"))} catch {DispatchQueue.main.async {NSApp.terminate(nil)};return}
         settings=engine.settings;login=SMAppService.mainApp.status == .enabled
         queue.async { _ = try? Recovery.restore(root:Files.state,force:true) }
@@ -124,18 +126,38 @@ final class Model: ObservableObject {
         else { openEasyConnect(enableAfterOpening: true) }
     }
     func show(_ name:String) {
-        if let w=windows[name] {w.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true);return}
+        if let w=windows[name] {
+            w.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps:true)
+            if name=="Clash 配置" { observation.refreshConfig(settings:settings) }
+            return
+        }
         let content:AnyView
         switch name {
+        case "连接日志": content=AnyView(TrafficView(model:self, observation:observation))
+        case "Clash 配置": content=AnyView(ConfigurationView(model:self, observation:observation))
         case "更新": content=AnyView(UpdateView())
         case "设置": content=AnyView(SettingsView(model:self))
         default: content=AnyView(DiagnosticsView(model:self))
         }
         let w=NSWindow(contentRect:NSRect(x:0,y:0,width:name=="设置" ? 510:660,height:name=="设置" ? 660:540),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
-        if name=="更新" {w.setContentSize(NSSize(width:510,height:280))};w.title="EasyClash · "+name;w.contentView=NSHostingView(rootView:content);w.isReleasedWhenClosed=false;w.center();windows[name]=w;w.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
+        if name=="连接日志" { w.setContentSize(NSSize(width:1000,height:640)) }
+        if name=="Clash 配置" { w.setContentSize(NSSize(width:820,height:620)) }
+        if name=="更新" {w.setContentSize(NSSize(width:510,height:280))};w.title="EasyClash · "+name;w.contentView=NSHostingView(rootView:content);w.isReleasedWhenClosed=false;w.center();windows[name]=w;
+        if name=="连接日志" || name=="Clash 配置" {
+            w.delegate=self
+        };w.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
         if name=="诊断" {refresh(diagnostics:true)}
     }
     func quit() { guard !busy && !connectingNetBird && !openingEasyConnect else { return }; operation({try self.engine.disable()},completion:{NSApp.terminate(nil)})}
+}
+
+extension Model: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              let name = windows.first(where: { $0.value === window })?.key else { return }
+        windows.removeValue(forKey:name)
+    }
 }
 
 struct StateRow:View {
@@ -170,6 +192,10 @@ struct MenuView:View {
                 Button("重新检测") { model.refresh(diagnostics: true) }.disabled(model.busy)
             }
             Divider()
+            HStack {
+                Button("连接日志…") { model.show("连接日志") }
+                Button("Clash 配置…") { model.show("Clash 配置") }
+            }
             HStack {Button("设置…") {model.show("设置")};Button("诊断…") {model.show("诊断")};Button("检查更新…") {model.show("更新")};Spacer();Button("退出",action:model.quit).disabled(model.busy || model.connectingNetBird)}.buttonStyle(.plain)
         }.padding(18).frame(width:370)
 
