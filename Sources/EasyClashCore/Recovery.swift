@@ -30,9 +30,9 @@ public enum Recovery {
         if try markerPresent(lease.marker,api:api) {
             let source=lease.settings.configURL
             let before=try Data(contentsOf:source)
-            let base=try Files.yaml(source)
+            let document = try RuntimeSource(before)
             guard try Data(contentsOf:source)==before else {throw AppFailure("恢复时 Clash 正在更新配置，稍后重试")}
-            try api.reload(base,requireTun:false)
+            try api.reload(document.config, requireTun:false, sourceOrder:document.dnsPolicyOrder)
             guard try !markerPresent(lease.marker,api:api) else {throw AppFailure("恢复后仍检测到本应用规则")}
         }
         // Absence of the marker means Clash has independently replaced the overlay. Do not overwrite it.

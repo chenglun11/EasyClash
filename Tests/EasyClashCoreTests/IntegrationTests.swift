@@ -42,6 +42,30 @@ func integrationTests() throws {
     expectTrue(try Recovery.restore(root:root,explicitSocket:socket))
     let after=try api.request("/rules")["rules"] as! [[String:Any]]
     expectEqual(after.first?["payload"] as? String,"subscription.example")
+    // Simulate a subscription changing only DNS priority while an overlay owns the runtime.
+    // Both rcode upstreams are local to Mihomo. No query leaves the fixture.
+    let providerKey = "rule-set:public-sites"
+    let suffixKey = "+.corp.example"
+    var orderedFixture = latest
+    orderedFixture["dns"] = ["enable":true, "enhanced-mode":"redir-host", "nameserver":["rcode://refused"]]
+    orderedFixture["rule-providers"] = ["public-sites":["type":"inline", "behavior":"domain", "payload":["portal.corp.example"]]]
+    let fixtureText = try Files.yamlText(orderedFixture)
+    for providerFirst in [true, false] {
+        let scoped = "  '\(providerKey)': rcode://success"
+        let broad = "  '\(suffixKey)': rcode://name_error"
+        let entries = providerFirst ? [scoped, broad] : [broad, scoped]
+        let yaml = "policy-defaults: &priority\n" + entries.joined(separator:"\n") + "\n"
+            + fixtureText.replacingOccurrences(of:"\ndns:\n", with:"\ndns:\n  nameserver-policy: {<<: *priority}\n")
+        try Files.write(Data(yaml.utf8), to:source)
+        var activeOverlay = latest
+        activeOverlay["rules"] = ["DOMAIN," + lease.marker + ",REJECT", "MATCH,DIRECT"]
+        try api.reload(activeOverlay, requireTun:false)
+        try Files.json(lease, to:root.appendingPathComponent("lease.json"))
+        expectTrue(try Recovery.restore(root:root, explicitSocket:socket))
+        let result = try api.request("/dns/query?name=portal.corp.example&type=A")
+        expectEqual(result["Status"] as? Int, providerFirst ? 0 : 3)
+    }
+    try Files.write(Data(try Files.yamlText(latest).utf8), to:source)
     // Compile nested route-aware DIRECT rules in a real isolated core (no real VPN traffic).
     var routeFixture=latest
     routeFixture["dns"]=["enable":true,"nameserver":["127.0.0.1:53535"],"enhanced-mode":"fake-ip"]

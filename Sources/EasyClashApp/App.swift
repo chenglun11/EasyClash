@@ -61,9 +61,10 @@ final class Model: ObservableObject {
         do {if value {try SMAppService.mainApp.register()} else {try SMAppService.mainApp.unregister()};login=SMAppService.mainApp.status == .enabled}
         catch {self.error="登录启动设置失败，请在系统设置 → 通用 → 登录项中检查"}
     }
-    func openEasyConnect() {
-        let url=URL(fileURLWithPath:"/Applications/EasyConnect.app")
-        NSWorkspace.shared.openApplication(at:url,configuration:NSWorkspace.OpenConfiguration()) { _,error in if error != nil {Task { @MainActor in self.error="未找到 /Applications/EasyConnect.app" }} }
+    func openVPN() {
+        let name = settings.vpnBackend.rawValue
+        let url=URL(fileURLWithPath:"/Applications/"+name+".app")
+        NSWorkspace.shared.openApplication(at:url,configuration:NSWorkspace.OpenConfiguration()) { _,error in if error != nil {Task { @MainActor in self.error="无法打开 "+name }} }
     }
     func show(_ name:String) {
         if let w=windows[name] {w.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true);return}
@@ -85,11 +86,11 @@ struct MenuView:View {
         VStack(alignment:.leading,spacing:14) {
             HStack {Image(systemName:model.state.active ? "network.badge.shield.half.filled":"network").font(.title2).foregroundStyle(model.state.active ? .green:.secondary);VStack(alignment:.leading,spacing:3) {Text("EasyClash").font(.headline);Text(model.state.mode).font(.caption).foregroundStyle(.secondary)};Spacer();if model.busy || model.checking {ProgressView().controlSize(.small)}}
             Divider()
-            VStack(spacing:8) {StateRow(title:model.state.client=="FlClash" ? "FlClash":"Clash",value:model.state.clash);StateRow(title:"TUN",value:model.state.tun);StateRow(title:"EasyConnect",value:model.state.easyConnect);StateRow(title:"VPN 路由",value:model.state.vpn);StateRow(title:"公司 DNS",value:model.state.dns)}
+            VStack(spacing:8) {StateRow(title:model.state.client=="FlClash" ? "FlClash":"Clash",value:model.state.clash);StateRow(title:"TUN",value:model.state.tun);StateRow(title:model.settings.vpnBackend.rawValue,value:model.settings.vpnBackend == .netBird ? model.state.netBird : model.state.easyConnect);StateRow(title:"VPN 路由",value:model.state.vpn);StateRow(title:"公司 DNS",value:model.state.dns)}
             if !model.state.warning.isEmpty {Label(model.state.warning,systemImage:"exclamationmark.triangle").font(.caption).foregroundStyle(.orange).fixedSize(horizontal:false,vertical:true)}
             if !model.error.isEmpty {Text(model.error).font(.caption).foregroundStyle(.red)}
             Button(action:model.toggle) {Text(model.state.enabled ? "关闭协同模式":"开启协同模式").frame(maxWidth:.infinity)}.buttonStyle(.borderedProminent).disabled(model.busy)
-            HStack {Button("打开 EasyConnect",action:model.openEasyConnect);Spacer();Button("重新检测") {model.refresh(diagnostics:true)}.disabled(model.busy)}
+            HStack {Button("打开 "+model.settings.vpnBackend.rawValue,action:model.openVPN);Spacer();Button("重新检测") {model.refresh(diagnostics:true)}.disabled(model.busy)}
             Divider()
             HStack {Button("设置…") {model.show("设置")};Button("诊断…") {model.show("诊断")};Spacer();Button("退出",action:model.quit).disabled(model.busy)}.buttonStyle(.plain)
         }.padding(18).frame(width:370)
@@ -100,6 +101,7 @@ struct SettingsView:View {
     @ObservedObject var model:Model
     @State private var domains=""
     @State private var dns=""
+    @State private var vpnBackend: VPNBackend = .easyConnect
     @State private var probeHost=""
     @State private var directory=""
     @State private var client:ProxyClient = .verge
@@ -108,9 +110,10 @@ struct SettingsView:View {
             Section("公司网络") {
                 Text("公司域名（每行一个，包含全部子域名）").font(.caption).foregroundStyle(.secondary)
                 TextEditor(text:$domains).font(.system(.body,design:.monospaced)).frame(height:95).border(.quaternary)
-                TextField("公司 DNS（IPv4）",text:$dns)
+                Picker("VPN",selection:$vpnBackend) { ForEach(VPNBackend.allCases,id:\.self) { Text($0.rawValue).tag($0) } }
+                if vpnBackend == .easyConnect { TextField("公司 DNS（IPv4）",text:$dns) }
                 TextField("探测主机（可选，必须能经 VPN 访问）",text:$probeHost)
-                Text("留空则检查首个公司域名；探测主机必须属于上面的域名范围。").font(.caption).foregroundStyle(.secondary)
+                Text(vpnBackend == .netBird ? "使用 NetBird 分配的资源和 DNS。只有通配符资源时，请填写具体探测主机。" : "留空则检查首个公司域名；探测主机必须属于上面的域名范围。").font(.caption).foregroundStyle(.secondary)
                 Text("仅在 VPN 路由就绪时生效；VPN 断开后恢复 Clash 原有解析。内网 DNS 查询失败不会转发到公共 DNS。").font(.caption).foregroundStyle(.secondary)
             }
             Section("代理客户端") {
@@ -125,8 +128,8 @@ struct SettingsView:View {
             }
             if model.state.enabled {Text("修改设置前，请先关闭协同模式。").foregroundStyle(.orange)}
             if !model.error.isEmpty {Text(model.error).foregroundStyle(.red)}
-            HStack {Spacer();Button("保存") {var s=EasyClashCore.Settings();s.domains=domains.components(separatedBy:.newlines);s.dns=dns.trimmingCharacters(in:.whitespaces);s.clashDirectory=directory;s.client=client;s.probeHost=probeHost;model.save(s)}.buttonStyle(.borderedProminent).disabled(model.busy || model.state.enabled)}
-        }.formStyle(.grouped).padding().onAppear {client=model.settings.client;domains=model.settings.domains.joined(separator:"\n");dns=model.settings.dns;probeHost=model.settings.probeHost;directory=model.settings.clashDirectory}
+            HStack {Spacer();Button("保存") {var s=EasyClashCore.Settings();s.domains=domains.components(separatedBy:.newlines);s.dns=dns.trimmingCharacters(in:.whitespaces);s.clashDirectory=directory;s.client=client;s.vpnBackend=vpnBackend;s.probeHost=probeHost;model.save(s)}.buttonStyle(.borderedProminent).disabled(model.busy || model.state.enabled)}
+        }.formStyle(.grouped).padding().onAppear {vpnBackend=model.settings.vpnBackend;client=model.settings.client;domains=model.settings.domains.joined(separator:"\n");dns=model.settings.dns;probeHost=model.settings.probeHost;directory=model.settings.clashDirectory}
     }
 }
 struct DiagnosticsView:View {

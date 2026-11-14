@@ -58,9 +58,9 @@ public enum NetworkProbe {
         let r=try? Command.run("/usr/sbin/scutil",["--proxy"],timeout:3)
         return r?.out.range(of:"(?:HTTPEnable|HTTPSEnable|SOCKSEnable|ProxyAutoConfigEnable) : 1",options:.regularExpression) != nil
     }
-    public static func query(_ name:String,server:String) throws -> [String] {
+    public static func query(_ name:String,server:String,source:String?=nil) throws -> [String] {
         // Settings/host validation is done by callers. No fallback server, no UDP race.
-        let r=try Command.run("/usr/bin/dig",["+tcp","+time=2","+tries=1","@"+server,name,"A","+noall","+answer","+comments"],timeout:4)
+        let r=try Command.run("/usr/bin/dig",(source.map {["-b",$0]} ?? [])+["+tcp","+time=2","+tries=1","@"+server,name,"A","+noall","+answer","+comments"],timeout:4)
         guard r.code==0, r.out.contains("status: NOERROR") else { throw AppFailure("公司 DNS 超时、拒绝或返回错误") }
         let answers: [String] = r.out.split(separator:"\n").compactMap { line in
             let p=line.split(whereSeparator:{$0.isWhitespace})

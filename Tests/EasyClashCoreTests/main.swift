@@ -20,6 +20,7 @@ do {
     try tests.testLogContainsOnlyEventCode()
     tests.testRouteTableScopeAndInterfaceChanges()
     try tests.testBackgroundCommandsExitAndTimeout()
+    try netBirdTests()
     try clientTests()
     try integrationTests()
     try flClashIntegrationTests()

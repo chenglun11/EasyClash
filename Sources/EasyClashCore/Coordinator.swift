@@ -5,6 +5,7 @@ public struct Snapshot: Codable {
     public var mode="已关闭"
     public var clash="检测中"
     public var tun="检测中"
+    public var netBird="未检测"
     public var easyConnect="检测中"
     public var vpn="检测中"
     public var dns="未测试"
@@ -15,7 +16,7 @@ public struct Snapshot: Codable {
     public var hosts:[HostDiagnostic]=[]
     public init() {}
     public var report:String {
-        var rows=["EasyClash 脱敏诊断", "检测时间：\(ISO8601DateFormatter().string(from:checked))", "客户端：\(client)","协同模式：\(mode)","Clash：\(clash)","TUN：\(tun)","EasyConnect：\(easyConnect)","VPN 路由：\(vpn)","公司 DNS：\(dns)"]
+        var rows=["EasyClash 脱敏诊断", "检测时间：\(ISO8601DateFormatter().string(from:checked))", "客户端：\(client)","协同模式：\(mode)","Clash：\(clash)","TUN：\(tun)","EasyConnect：\(easyConnect)","NetBird：\(netBird)","VPN 路由：\(vpn)","公司 DNS：\(dns)"]
         if !warning.isEmpty {rows.append("提示："+warning)}
         for (index,h) in hosts.enumerated() { rows.append("目标 \(index+1) | DNS \(h.dns) | 路由 \(h.route) | HTTPS \(h.https)") }
         rows.append("不包含域名、订阅、密钥、VPN 凭据、IP 地址或完整配置。")
@@ -30,6 +31,8 @@ public final class Coordinator {
     private var lease:Lease?
     private var fingerprint=""
     private var lastProbe=Date.distantPast
+    private var grace = NetBirdProbeGrace()
+    private var pendingProbe = false
     private var lastDNS="未测试"
     private var lastHosts:[HostDiagnostic]=[]
     private let explicitSocket:String?
@@ -48,6 +51,7 @@ public final class Coordinator {
         if let helper {try Recovery.installHelper(root:root,binary:helper)}
         else if explicitSocket==nil {throw AppFailure("缺少恢复程序，请从完整 .app 启动")}
         lease=Lease(settings:settings,appPath:appPath)
+        grace.reset(); pendingProbe=false; lastProbe = .distantPast
         enabled=true;fingerprint="";Audit(root:root).event("mode_enabled")
     }
     public func disable() throws {
@@ -64,7 +68,7 @@ public final class Coordinator {
             return s
         }
         guard (try? settings.validated()) != nil else {
-            s.mode="待配置";s.warning="请先在设置中填写公司域名、DNS 和探测主机。"
+            s.mode="待配置";s.warning="请先在设置中选择 VPN 并填写公司网络信息。"
             s.clash="未检测";s.tun="未检测";s.easyConnect="未检测";s.vpn="未检测";s.hosts=[]
             return s
         }
@@ -78,12 +82,32 @@ public final class Coordinator {
             let tun=general["tun"] as? [String:Any] ?? [:]
             let on=tun["enable"] as? Bool == true, device=tun["device"] as? String ?? ""
             s.tun=on ? "已开启 · "+device : "未开启"
+            if settings.vpnBackend == .netBird {
+                let (status, plan) = NetBirdPlan.discover(domains: settings.domains)
+                s.netBird = status
+                s.vpn = plan.map { "NetBird · " + $0.device } ?? "隧道未就绪"
+                guard let plan, !plan.servers.isEmpty, on, plan.device != device,
+                      general["mode"] as? String == "rule" else {
+                    if enabled {
+                        try Recovery.restore(root: root, force: true, explicitSocket: explicitSocket)
+                        fingerprint = ""
+                        s.mode = "等待 NetBird 资源、TUN 或规则模式"
+                    }
+                    grace.reset()
+                    pendingProbe = false
+                    lastHosts = []
+                    s.hosts = []
+                    return s
+                }
+                guard enabled else { return s }
+                return try inspectNetBird(plan, api: api, general: general, snapshot: s, diagnostics: diagnostics)
+            }
             let route=try? NetworkProbe.route(settings.dns)
             let ready=route?.isVPN(dns:settings.dns,clashDevice:device,easyConnectRunning:process)==true
             s.vpn=ready ? "可用 · "+route!.interface : "不可用（进程存在不代表 VPN 已连接）"
             let source=settings.configURL
             let sourceBytes=try Data(contentsOf:source)
-            let base=try Files.yaml(source)
+
             if diagnostics || Date().timeIntervalSince(lastProbe)>20 {
                 lastProbe=Date()
                 if ready, let r=route {
@@ -103,10 +127,9 @@ public final class Coordinator {
                     _ = try Recovery.restore(root:root,force:true,explicitSocket:explicitSocket)
                     fingerprint="";s.mode = !on ? "等待 Clash TUN" : !ready ? "等待 VPN · 公司内网暂不可用" : "等待 Clash 规则模式"
                 } else if let route, var session=lease {
-                    let attrs=try FileManager.default.attributesOfItem(atPath:source.path)
                     let cidrs=try NetworkProbe.vpnCIDRs(interface:route.interface)
                     guard !cidrs.isEmpty else {throw AppFailure("VPN 没有可用的目标网段")}
-                    let current=Files.hash(sourceBytes)+route.interface+cidrs.joined(separator:",")+String(describing:attrs[.modificationDate])
+                    let current=Files.hash(sourceBytes)+route.interface+cidrs.joined(separator:",")
                     let lock=try FileLock(root.appendingPathComponent("transaction.lock"));defer{withExtendedLifetime(lock){}}
                     let present=try Recovery.markerPresent(session.marker,api:api)
                     if fingerprint != current || !present {
@@ -122,10 +145,11 @@ public final class Coordinator {
                         let leaseURL=root.appendingPathComponent("lease.json")
                         if !FileManager.default.fileExists(atPath:leaseURL.path) {session.updated=Date();try Files.json(session,to:leaseURL)}
                         lease=session
-                        var overlay=try Configuration.overlay(base,settings:settings,interface:route.interface,vpnCIDRs:cidrs)
+                        let document = try RuntimeSource(sourceBytes)
+                        var overlay=try Configuration.overlay(document.config,settings:settings,interface:route.interface,vpnCIDRs:cidrs)
                         var rules=overlay["rules"] as? [String] ?? []
                         rules.insert("DOMAIN,\(session.marker),REJECT",at:settings.domains.count*2);overlay["rules"]=rules
-                        try api.reload(overlay)
+                        try api.reload(overlay, sourceOrder: document.dnsPolicyOrder, overlayKeys: settings.domains.map { "+." + $0 })
                         guard try api.hasRules(settings.domains),try Recovery.markerPresent(session.marker,api:api) else {throw AppFailure("最终生效规则验证失败")}
                         let actual=try api.dns(testName)
                         guard !actual.isEmpty, Set(actual)==Set(upstream), !actual.contains(where:{$0.hasPrefix("198.18.") || $0.hasPrefix("198.19.")}) else {throw AppFailure("生效 DNS 未匹配公司上游结果")}
@@ -154,5 +178,83 @@ public final class Coordinator {
             // Do not refresh a lease after a failed transaction. Guardian retries restoration independently.
         }
         return s
+    }
+
+    private func inspectNetBird(_ plan: NetBirdPlan, api: ClashAPI, general: [String: Any],
+                                snapshot: Snapshot, diagnostics: Bool) throws -> Snapshot {
+        guard var session = lease else { throw AppFailure("协同会话未就绪") }
+        var result = snapshot
+        let bytes = try Data(contentsOf: settings.configURL)
+        let resources = plan.servers.keys.sorted()
+        let identity = [Files.hash(bytes), plan.device, plan.localIP] + resources.map { $0 + ":" + plan.servers[$0]! }
+        let signature = identity.joined(separator: ",")
+        let present = try Recovery.markerPresent(session.marker, api: api)
+        let needsApply = fingerprint != signature || !present
+        let hosts = settings.probeHost.isEmpty ? Array(resources.filter { !$0.hasPrefix("*.") }.prefix(3)) : [settings.probeHost]
+        do {
+            if needsApply || diagnostics || Date().timeIntervalSince(lastProbe) > (pendingProbe ? 5 : 25) {
+                let sample = hosts.lazy.compactMap { host -> (String, String, [String])? in
+                    guard let server = plan.resolver(for: host),
+                          (try? NetworkProbe.route(server).interface) == plan.device,
+                          let ips = try? NetworkProbe.query(host, server: server, source: plan.localIP),
+                          !ips.isEmpty, ips.allSatisfy({ (try? NetworkProbe.route($0).interface) == plan.device })
+                    else { return nil }
+                    return (host, server, ips)
+                }.first
+                if let (host, server, upstream) = sample {
+                    grace.reset()
+                    pendingProbe = false
+                    if needsApply {
+                        let lock = try FileLock(root.appendingPathComponent("transaction.lock"))
+                        defer { withExtendedLifetime(lock) {} }
+                        let document = try RuntimeSource(bytes)
+                        let overlay = try plan.overlay(document.config, marker: session.marker)
+                        guard try Data(contentsOf: settings.configURL) == bytes,
+                              try NetworkProbe.route(server).interface == plan.device else {
+                            throw AppFailure("资源或配置正在变化，稍后重试")
+                        }
+                        let backup = root.appendingPathComponent("backups/first-netbird-runtime.yaml")
+                        if !FileManager.default.fileExists(atPath: backup.path) { try Files.write(bytes, to: backup) }
+                        session.updated = Date()
+                        try Files.json(session, to: root.appendingPathComponent("lease.json"))
+                        try api.reload(overlay, sourceOrder: document.dnsPolicyOrder, overlayKeys: resources)
+                        let rules = try api.request("/rules")["rules"] as? [[String: Any]] ?? []
+                        let assigned = rules.dropFirst().prefix(resources.count)
+                        guard rules.first?["payload"] as? String == session.marker,
+                              assigned.allSatisfy({ $0["proxy"] as? String == Configuration.vpnProxy }),
+                              Set(assigned.compactMap { $0["payload"] as? String }) == Set(resources)
+                        else { throw AppFailure("NetBird 分流规则验证失败") }
+                    }
+                    guard Set(try api.dns(host)) == Set(upstream) else { throw AppFailure("Clash DNS 与 VPN DNS 不一致") }
+                    fingerprint = signature
+                    let (code, ok) = (try? NetworkProbe.proxyHTTPS(host: host, port: general["mixed-port"] as? Int ?? 0)) ?? (0, false)
+                    lastHosts = [HostDiagnostic(host: host, dns: "专用 DNS 已验证", route: "NetBird · " + plan.device,
+                                                https: ok ? "HTTP " + String(code) : "HTTPS 连接失败", reachable: ok)]
+                } else if Set(plan.servers.values).allSatisfy({ (try? NetworkProbe.route($0).interface) == plan.device }),
+                          grace.retain(fingerprint: signature, installed: fingerprint, markerPresent: present,
+                                       now: ProcessInfo.processInfo.systemUptime) {
+                    pendingProbe = true
+                    lastHosts = []
+                } else {
+                    throw AppFailure(hosts.isEmpty ? "请为通配符资源填写具体探测主机" : "NetBird 资源的 DNS 或路由尚未通过验证")
+                }
+                lastProbe = Date()
+            }
+            session.updated = Date()
+            try Files.json(session, to: root.appendingPathComponent("lease.json"))
+            lease = session
+            result.hosts = lastHosts
+            result.active = lastHosts.first?.reachable == true
+            result.dns = pendingProbe ? "专用 DNS 或路由待复查" : "资源 DNS 抽检通过"
+            result.mode = pendingProbe ? "保留已验证规则，正在复查" : (result.active ? "NetBird 协同中" : "NetBird 协同中 · HTTPS 待检查")
+            return result
+        } catch {
+            try Recovery.restore(root: root, force: true, explicitSocket: explicitSocket)
+            fingerprint = ""
+            lastHosts = []
+            grace.reset()
+            pendingProbe = false
+            throw error
+        }
     }
 }

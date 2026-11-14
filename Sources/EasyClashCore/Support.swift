@@ -8,6 +8,45 @@ public struct AppFailure: Error, LocalizedError {
     public init(_ message: String) { self.message = message }
     public var errorDescription: String? { message }
 }
+/// Keep the ordered DNS mapping alongside the values used by the configuration transforms.
+struct RuntimeSource {
+    let config: [String: Any]
+    let dnsPolicyOrder: [String]
+
+    init(_ data: Data) throws {
+        do {
+            guard let text = String(data: data, encoding: .utf8),
+                  let root = try Yams.compose(yaml: text),
+                  let config = root.any as? [String: Any] else { throw AppFailure("配置不是 YAML 对象") }
+            self.config = config
+            let dns = Self.child("dns", of: root)
+            let policy = dns.flatMap { Self.child("nameserver-policy", of: $0) }
+            dnsPolicyOrder = policy.map { Self.entries($0).compactMap { $0.key.string } } ?? []
+        } catch { throw AppFailure("无法读取运行配置的 DNS 策略顺序") }
+    }
+
+    private static func child(_ name: String, of node: Node) -> Node? {
+        entries(node).last { $0.key.string == name }?.value
+    }
+
+    // YAML merge keys can appear at the root, dns, or policy level. Explicit keys
+    // override inherited values, and earlier maps in a merge sequence have priority.
+    private static func entries(_ node: Node) -> [(key: Node, value: Node)] {
+        guard let mapping = node.mapping else { return [] }
+        var inherited: [(key: Node, value: Node)] = []
+        var explicit: [(key: Node, value: Node)] = []
+        for entry in mapping {
+            if entry.key.tag == Tag(.merge) {
+                let parents = entry.value.sequence.map { Array($0.reversed()) } ?? [entry.value]
+                for parent in parents { inherited += entries(parent) }
+            } else {
+                explicit.append(entry)
+            }
+        }
+        return inherited + explicit
+    }
+}
+
 public enum Files {
     public static let fm = FileManager.default
     public static var home: URL { fm.homeDirectoryForCurrentUser }
@@ -79,18 +118,25 @@ private final class DataBox: @unchecked Sendable {
     func set(_ d:Data) { lock.lock(); defer {lock.unlock()}; value=d }
     func get()->Data { lock.lock(); defer {lock.unlock()}; return value }
 }
+public enum VPNBackend: String, Codable, CaseIterable {
+    case easyConnect = "EasyConnect"
+    case netBird = "NetBird"
+}
+
 public struct Settings: Codable, Equatable {
     public var domains: [String] = []
     public var dns: String = ""
+    public var vpnBackend: VPNBackend = .easyConnect
     public var probeHost: String = ""
     public var effectiveProbeHost: String {probeHost.isEmpty ? (domains.first ?? "") : probeHost}
     public var client:ProxyClient = .verge
     public var clashDirectory: String = Files.clash.path
     public var configURL:URL {URL(fileURLWithPath:clashDirectory).appendingPathComponent(client.configName)}
     public init() {}
-    enum CodingKeys:String,CodingKey {case domains,dns,clashDirectory,client,probeHost}
+    enum CodingKeys:String,CodingKey {case domains,dns,clashDirectory,client,probeHost,vpnBackend}
     public init(from decoder:Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
+        vpnBackend = try c.decodeIfPresent(VPNBackend.self, forKey: .vpnBackend) ?? .easyConnect
         client=try c.decodeIfPresent(ProxyClient.self,forKey:.client) ?? .verge
         domains=try c.decodeIfPresent([String].self,forKey:.domains) ?? []
         dns=try c.decodeIfPresent(String.self,forKey:.dns) ?? ""
@@ -110,8 +156,10 @@ public struct Settings: Codable, Equatable {
             let labels=s.probeHost.split(separator:".",omittingEmptySubsequences:false)
             guard s.probeHost.count<=253,labels.allSatisfy({!$0.isEmpty && $0.count<=63 && $0.range(of:"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",options:.regularExpression) != nil}),s.domains.contains(where:{s.probeHost == $0 || s.probeHost.hasSuffix("."+$0)}) else {throw AppFailure("探测主机必须属于已配置的公司域名，且不含协议或路径")}
         }
-        var ip=in_addr()
-        guard inet_pton(AF_INET,s.dns,&ip)==1, !s.dns.hasPrefix("127."), s.dns != "0.0.0.0", !s.dns.hasPrefix("198.18."), !s.dns.hasPrefix("198.19.") else { throw AppFailure("公司 DNS 必须是有效的非回环 IPv4 地址") }
+        if vpnBackend == .easyConnect {
+            var ip=in_addr()
+            guard inet_pton(AF_INET,s.dns,&ip)==1, !s.dns.hasPrefix("127."), s.dns != "0.0.0.0", !s.dns.hasPrefix("198.18."), !s.dns.hasPrefix("198.19.") else { throw AppFailure("公司 DNS 必须是有效的非回环 IPv4 地址") }
+        }
         guard s.clashDirectory.hasPrefix("/") else { throw AppFailure("Clash 配置目录必须是绝对路径") }
         return s
     }

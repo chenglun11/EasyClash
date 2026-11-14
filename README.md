@@ -1,6 +1,6 @@
 # EasyClash
 
-让 macOS 上的 Clash TUN 与 EasyConnect 协同工作的菜单栏工具。支持选择 Clash Verge Rev 或 FlClash，使用 Swift + SwiftUI 实现。
+让 macOS 上的 Clash TUN 与 NetBird 或 EasyConnect 协同工作的菜单栏工具。支持选择 Clash Verge Rev 或 FlClash，使用 Swift + SwiftUI 实现。
 
 **当前为预发布版本。** VPN 的路由方式、客户端版本和 DNS 配置会影响兼容性，目前不承诺支持所有企业 VPN 环境。应用不是上述客户端的官方组件，不包含 VPN、代理内核或订阅。
 
@@ -15,13 +15,17 @@
 
 不会自动处理 VPN 凭据、断开 VPN、开关 TUN 或重启代理客户端。协同配置不写入订阅、Merge 或扩展脚本。
 
-## 快速开始
+## 下载
+
+在 [GitHub Releases](https://github.com/chenglun11/EasyClash/releases) 下载 Apple Silicon 安装镜像。将 EasyClash 拖入 Applications。已有 NetBird 客户端可直接使用；首次安装请运行镜像内的官方 NetBird 安装包，并登录自己的网络。EasyClash 使用临时签名，未公证。
+
+## 从源码构建
 
 1. macOS 13 或更新版本，安装 Xcode Command Line Tools 和支持 Swift 5.10 的工具链。
 2. 在源码目录执行 `./scripts/build-app.sh`，生成 `dist/EasyClash.app`。构建产物仅临时签名（ad-hoc），没有 Developer ID 签名或公证。
 3. 把应用放到固定位置，例如 `/Applications`，首次启动进入“设置”。
-4. 填写自己的公司域名、公司 DNS IPv4、可经 VPN 访问的 HTTPS 探测主机。所有网络字段默认为空，没有预置公司信息。
-5. 选择客户端，保持该客户端 TUN 开启、规则模式，建议系统代理/PAC 关闭。在 EasyConnect 内自行完成登录，然后开启协同模式。
+4. 选择 VPN 并填写公司域名。NetBird 自动发现专用 DNS，只处理已分配且有 macOS 专用解析器的资源；仅有通配符资源时须填写具体探测主机。EasyConnect 需填写公司 DNS IPv4。所有网络字段默认为空，没有预置公司信息。
+5. 选择客户端，保持该客户端 TUN 开启、规则模式，建议系统代理/PAC 关闭。在所选 VPN 客户端内完成登录，然后开启协同模式。
 
 示例仅用于说明：域名 `corp.example.com`、DNS `192.0.2.53`、探测主机 `portal.corp.example.com`。这些是保留示例地址，不能用于实际连接。探测主机须属于配置的域名范围，解析出的 IPv4 地址须经 VPN 路由；留空时使用排序后的首个公司域名。
 
@@ -29,6 +33,7 @@ FlClash 使用回环控制 API。若 FlClash 未运行且接口为空，首次�
 
 ## 限制与验证
 
+- NetBird 使用已安装的本机 CLI、系统专用 DNS 与当前隧道接口；短暂探测失败时复查已验证的配置，接口或资源改变时重新验证。
 - 当前针对 IPv4、TCP DNS 和带独立 DNS 主机路由的 EasyConnect 环境；VPN DNS 必须支持 TCP/53。
 - 需要 Clash DNS 开启、fake-IP filter 的 blacklist 模式和可用控制 API。
 - 一次只协调一个客户端，不自动处理同时开启两个代理 TUN 的情况。

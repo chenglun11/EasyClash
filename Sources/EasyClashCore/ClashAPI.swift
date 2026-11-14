@@ -59,20 +59,54 @@ public final class ClashAPI {
         guard r["Status"] as? Int == 0 else {throw AppFailure("Clash DNS 返回错误状态")}
         return (r["Answer"] as? [[String:Any]] ?? []).filter { ($0["type"] as? Int)==1 }.compactMap { $0["data"] as? String }
     }
-    public func reload(_ base:[String:Any], requireTun:Bool=true) throws {
+    /// Mihomo tries overlapping policy matchers in document order. A JSON dictionary
+    /// sorted by key changes that behavior even when the set of rules is identical.
+    public static func payloadJSON(_ config: [String: Any], sourceOrder: [String] = [],
+                                   overlayKeys: [String] = []) throws -> String {
+        func encode(_ value: Any) throws -> String {
+            let bytes = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes])
+            return String(decoding: bytes, as: UTF8.self)
+        }
+        guard var dns = config["dns"] as? [String: Any],
+              let policy = dns.removeValue(forKey: "nameserver-policy") as? [String: Any] else { return try encode(config) }
+
+        var seen = Set<String>()
+        var pairs: [String] = []
+        for key in overlayKeys + sourceOrder + policy.keys.sorted() {
+            guard let value = policy[key], seen.insert(key).inserted else { continue }
+            pairs.append(try encode(key) + ":" + encode(value))
+        }
+        func insert(_ key: String, json: String, into rest: [String: Any]) throws -> String {
+            let tail = try encode(rest)
+            return "{" + (try encode(key)) + ":" + json + (rest.isEmpty ? "}" : "," + String(tail.dropFirst()))
+        }
+        var outer = config
+        outer.removeValue(forKey: "dns")
+        let ordered = "{" + pairs.joined(separator: ",") + "}"
+        return try insert("dns", json: insert("nameserver-policy", json: ordered, into: dns), into: outer)
+    }
+
+    public func reload(_ base: [String: Any], requireTun: Bool = true,
+                       sourceOrder: [String] = [], overlayKeys: [String] = []) throws {
         let before=try configs()
         let tun=before["tun"] as? [String:Any] ?? [:]
         if requireTun && tun["enable"] as? Bool != true { throw AppFailure("TUN 未开启；应用不会代为切换 TUN") }
         var payload=base
-        // GET /configs contains parsed/defaulted TUN values. Pass it verbatim to avoid ReCreateTun.
+        // Keep raw TUN defaults: serializing normalized GET values can recreate the interface.
         // Also preserve the user's live basic settings, including mode and ports.
-        for (k,v) in before { payload[k]=v }
+        let rawTun=base["tun"] as? [String:Any] ?? [:]
+        if let enabled=tun["enable"] as? Bool, rawTun["enable"] as? Bool != enabled {
+            var preserved=rawTun;preserved["enable"]=enabled;payload["tun"]=preserved
+        }
+        if tun["enable"] as? Bool==true, let dev=tun["device"] as? String,rawTun["device"] as? String != dev {throw AppFailure("磁盘与运行中 TUN 接口不同，跳过热加载")}
+        let index=(tun["device"] as? String).map {if_nametoindex($0)}
+        for (k,v) in before where k != "tun" { payload[k]=v }
         let selectors=(try? request("/proxies")["proxies"] as? [String:[String:Any]]) ?? [:]
         guard JSONSerialization.isValidJSONObject(payload) else {throw AppFailure("配置包含不支持的值类型")}
-        let payloadText=String(data:try JSONSerialization.data(withJSONObject:payload,options:[.sortedKeys,.withoutEscapingSlashes]),encoding:.utf8)!
+        let payloadText=try Self.payloadJSON(payload, sourceOrder: sourceOrder, overlayKeys: overlayKeys)
         try request("/configs?force=false",method:"PUT",body:["payload":payloadText])
         let after=try configs()
-        guard NSDictionary(dictionary:tun).isEqual(to:after["tun"] as? [String:Any] ?? [:]) else { throw AppFailure("热加载后 TUN 参数不一致，已停止进一步操作") }
+        guard index == (tun["device"] as? String).map({if_nametoindex($0)}), NSDictionary(dictionary:tun).isEqual(to:after["tun"] as? [String:Any] ?? [:]) else { throw AppFailure("热加载后 TUN 参数不一致，已停止进一步操作") }
         // Restore selector choices only where the selected member is still present after a subscription update.
         let newSelectors=(try? request("/proxies")["proxies"] as? [String:[String:Any]]) ?? [:]
         for (name,old) in selectors where old["type"] as? String == "Selector" {
